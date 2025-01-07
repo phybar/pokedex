@@ -8,6 +8,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"io"
+	"time"
+	"github.com/phybar/pokedexcli/pokecache"
 )
 // variable for the input command used after it has been cleaned
 var command string
@@ -16,8 +18,11 @@ var command string
 type cliCommand struct {
 	name		string
 	description	string
-	callback	func(cfg *Config) error
+	callback    interface{} // 
 }
+
+type cliCommandFunc func(cfg *Config) error
+type cliCommandWithCache func(func(cfg *Config, cache *pokecache.Cache) error)
 
 // Struct for the location data from API call
 type Location struct {
@@ -57,8 +62,13 @@ var commands = map[string]cliCommand{
 	},
 }
 
+
 func main(){
 	scanner := bufio.NewScanner(os.Stdin)
+
+	// Initialise the cache
+	var cache = pokecache.NewCache(5 * time.Minute)
+
 
 	cfg := &Config{
         next: nil,
@@ -81,7 +91,7 @@ func main(){
 			}
 
 			if cmd, exists := commands[command]; exists {
-				err := cmd.callback(cfg)
+				err := cmd.callback(cfg, cache) error
 				if err != nil {
 					fmt.Println("Error executing command:", err)
 				}
@@ -101,19 +111,26 @@ func commandExit(cfg *Config) error {
 }
 
 func commandHelp(cfg *Config) error {
-	fmt.Println("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nexit: Exit the Pokedex")
+	fmt.Println("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nmap: Displays the next 20 map locations\nmapb: Displays the previous 20 map locations\nexit: Exit the Pokedex")
 	return nil
 }
 // This function will send a Get request to the pokeApi for locations
 // No query is sent, so it should return 20 results
-func commandMap(cfg *Config) error {
+func commandMap(cfg *Config, cache *pokecache.Cache) error {
 	baseURL := "https://pokeapi.co/api/v2/location-area/"
     url := baseURL
-
+	// Creates new location struct
+	var location Location
 
 	if cfg.next != nil {
 		url = *cfg.next
 	}
+
+	entry, exists := cache.Get(url)
+	if exists {
+		body = entry
+	} else {
+
 	res, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
@@ -124,20 +141,23 @@ func commandMap(cfg *Config) error {
 // Takes the response and checks the status code to make sure its complete
 	body, err := io.ReadAll(res.Body)
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		fmt.Println("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
+		fmt.Printf("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
 	}
 	if err != nil {
 		fmt.Printf("Error: %s", err)
 		return err
 	}
-	// Creates new location struct
-	var location Location
+	
 	// Uses the helper unmarshal function
 	err = unmarshalJSON(body, &location)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
 		return err
 	}
+
+	cache.Add(url, body)
+
+}
 
 	cfg.next = location.Next
 	cfg.previous = location.Previous 
@@ -150,14 +170,18 @@ func commandMap(cfg *Config) error {
 
 }
 
-func commandMapb(cfg *Config) error {
+func commandMapb(cfg *Config, cache *pokecache.Cache) error {
 	if cfg.previous == nil {
 		fmt.Println("No previous command")
 		return nil
 	} 
-	
+	var location Location
 	url := *cfg.previous
-	
+
+	entry, exists := cache.Get(url)
+	if exists {
+		body = entry
+	} else {
 	
 	res, err := http.Get(url)
 	if err != nil {
@@ -169,20 +193,24 @@ func commandMapb(cfg *Config) error {
 // Takes the response and checks the status code to make sure its complete
 	body, err := io.ReadAll(res.Body)
 	if res.StatusCode < 200 || res.StatusCode > 299 {
-		fmt.Println("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
+		fmt.Printf("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
 	}
 	if err != nil {
 		fmt.Printf("Error: %s", err)
 		return err
 	}
 	// Creates new location struct
-	var location Location
+	
 	// Uses the helper unmarshal function
 	err = unmarshalJSON(body, &location)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
 		return err
 	}
+
+	cache.Add(url, body)
+
+}
 
 	cfg.next = location.Next
 	cfg.previous = location.Previous 

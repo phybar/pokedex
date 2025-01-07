@@ -19,7 +19,7 @@ type cacheEntry struct {
 func NewCache (interval time.Duration) *Cache {
 	cache := Cache{
 		entries: make(map[string]cacheEntry),
-		interval: interval
+		interval: interval,
 	}
 	go cache.reapLoop()
 	return &cache
@@ -59,7 +59,7 @@ func (c *Cache) Get(key string) ([]byte, bool) {
 
 }
 
-func (C *Cache) reapLoop() {
+func (c *Cache) reapLoop() {
 	// This should use a timer to delete the data from the cache if it hasn't been used in a little while
 	ticker := time.NewTicker(c.interval)
 	for {
