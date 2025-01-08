@@ -10,6 +10,7 @@ import (
 	"io"
 	"time"
 	"github.com/phybar/pokedexcli/pokecache"
+	"reflect"
 )
 // variable for the input command used after it has been cleaned
 var command string
@@ -22,7 +23,7 @@ type cliCommand struct {
 }
 
 type cliCommandFunc func(cfg *Config) error
-type cliCommandWithCache func(func(cfg *Config, cache *pokecache.Cache) error)
+type cliCommandWithCacheFunc func(cfg *Config, cache *pokecache.Cache) error
 
 // Struct for the location data from API call
 type Location struct {
@@ -43,22 +44,27 @@ var commands = map[string]cliCommand{
 	"exit": {
 		name: 		"exit",
 		description:	"Exit the Pokedex",
-		callback:	commandExit,
+		callback:	cliCommandFunc(commandExit),
 	},
 	"help": {
 		name:	"help",
 		description: "Displays a help message",
-		callback: commandHelp,
+		callback: cliCommandFunc(commandHelp),
 	},
 	"map": {
 		name:	"map",
 		description: "Displays the next 20 locations from the Pokemon world",
-		callback: commandMap,
+		callback: cliCommandWithCacheFunc(commandMap),
 	},
 	"mapb": {
 		name:	"mapb",
 		description: "Displays the next 20 locations from the Pokemon world",
-		callback: commandMapb,
+		callback: cliCommandWithCacheFunc(commandMapb),
+	},
+	"explore": {
+		name: "explore",
+		description: "Lists all Pokemon withing an area",
+		callback: cliCommandWithCacheFunc(commandExplore),
 	},
 }
 
@@ -90,18 +96,31 @@ func main(){
 
 			}
 
-			if cmd, exists := commands[command]; exists {
-				err := cmd.callback(cfg, cache) error
-				if err != nil {
-					fmt.Println("Error executing command:", err)
-				}
+			cmd, exists := commands[command]
+			if !exists {
+				fmt.Println("Command not found")
+				return
 			}
-		} else {
-			fmt.Println("No input detected")
-			break
-		}
+			
+			var err error
+
+			switch fn := cmd.callback.(type) {
+			case cliCommandWithCacheFunc:
+				err = fn(cfg, cache)
+			case cliCommandFunc:
+				err = fn(cfg)
+			default:
+				fmt.Printf("Unrecognized command type: %s\n", reflect.TypeOf(cmd.callback))
+			}
+
+			if err != nil {
+				fmt.Println("Error executing command:", err)
+			}
+		
+		
 		}
 	}
+}
 
 
 func commandExit(cfg *Config) error {
@@ -121,11 +140,13 @@ func commandMap(cfg *Config, cache *pokecache.Cache) error {
     url := baseURL
 	// Creates new location struct
 	var location Location
+	var body []byte
+	
 
 	if cfg.next != nil {
 		url = *cfg.next
 	}
-
+	
 	entry, exists := cache.Get(url)
 	if exists {
 		body = entry
@@ -134,6 +155,8 @@ func commandMap(cfg *Config, cache *pokecache.Cache) error {
 	res, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
+		fmt.Println("Reached error block")
+		fmt.Println("Using body:", string(body))
 		return err
 	}
 	defer res.Body.Close()
@@ -176,8 +199,10 @@ func commandMapb(cfg *Config, cache *pokecache.Cache) error {
 		return nil
 	} 
 	var location Location
+	var body []byte
+	
 	url := *cfg.previous
-
+	
 	entry, exists := cache.Get(url)
 	if exists {
 		body = entry
@@ -186,6 +211,8 @@ func commandMapb(cfg *Config, cache *pokecache.Cache) error {
 	res, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
+		fmt.Println("Reached error block")
+		fmt.Println("Using body:", string(body))
 		return err
 	}
 	defer res.Body.Close()
@@ -219,6 +246,56 @@ func commandMapb(cfg *Config, cache *pokecache.Cache) error {
 		fmt.Println(result.Name)
 	}
 	return nil
+}
+
+func commandExplore(cfg *Config, cache *pokecache.Cache) error {
+	// This command shows a list of all pokemon within the area of the last map command
+	// It uses a cache
+	// It will have to take a name as an input, the use that in the API call...
+	if cfg.previous == nil {
+		fmt.Println("No previous command")
+		return nil
+	} 
+	var location Location
+	var body []byte
+	
+	url := *cfg.previous
+	
+	entry, exists := cache.Get(url)
+	if exists {
+		body = entry
+	} else {
+	
+	res, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		fmt.Println("Reached error block")
+		fmt.Println("Using body:", string(body))
+		return err
+	}
+	defer res.Body.Close()
+
+// Takes the response and checks the status code to make sure its complete
+	body, err := io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		fmt.Printf("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
+	}
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		return err
+	}
+	// Creates new location struct
+	
+	// Uses the helper unmarshal function
+	err = unmarshalJSON(body, &location)
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		return err
+	}
+
+	cache.Add(url, body)
+
+}
 }
 
 // Unmarshalling of JSON data recieved - this will take a slice of bytes, and pass it 
