@@ -24,6 +24,7 @@ type cliCommand struct {
 
 type cliCommandFunc func(cfg *Config) error
 type cliCommandWithCacheFunc func(cfg *Config, cache *pokecache.Cache) error
+// type cliCommandExplore func(cfg *Config, input string) error
 
 // Struct for the location data from API call
 type Location struct {
@@ -34,9 +35,18 @@ type Location struct {
     } `json:"results"`
 }
 
+type LocationArea struct {
+    PokemonEncounters []struct {
+        Pokemon struct {
+            Name string `json:"name"`
+        } `json:"pokemon"`
+    } `json:"pokemon_encounters"`
+}
+
 type Config struct {
 	next 	*string // URL for the next page in the list
 	previous *string // URL for the previous page in the list
+	params []string // Store command parameters
 }
 
 
@@ -79,6 +89,7 @@ func main(){
 	cfg := &Config{
         next: nil,
         previous: nil,
+		params: []string{},
     }
 
 
@@ -88,13 +99,19 @@ func main(){
 		if scanner.Scan() {
 			input := scanner.Text()
 			cleanedInput := cleanInput(input)
+			
 
 			// cleanInput returns a slice of strings
 			if len(cleanedInput) > 0 {
 				command = cleanedInput[0] // Capture first word
+				if len(cleanedInput) > 1 {
+					cfg.params = cleanedInput[1:]
+				} else {
+					cfg.params = []string{}
+				}
 				fmt.Printf("Your command was: %s\n", command)
 
-			}
+			
 
 			cmd, exists := commands[command]
 			if !exists {
@@ -109,6 +126,8 @@ func main(){
 				err = fn(cfg, cache)
 			case cliCommandFunc:
 				err = fn(cfg)
+			// case cliCommandExplore:
+			// 	err = fn(cfg, input)
 			default:
 				fmt.Printf("Unrecognized command type: %s\n", reflect.TypeOf(cmd.callback))
 			}
@@ -118,8 +137,9 @@ func main(){
 			}
 		
 		
-		}
-	}
+				}
+			}
+		}	
 }
 
 
@@ -252,20 +272,27 @@ func commandExplore(cfg *Config, cache *pokecache.Cache) error {
 	// This command shows a list of all pokemon within the area of the last map command
 	// It uses a cache
 	// It will have to take a name as an input, the use that in the API call...
-	if cfg.previous == nil {
-		fmt.Println("No previous command")
+	if len(cfg.params) < 1 {
+		fmt.Println("Please provide a location name")
 		return nil
-	} 
-	var location Location
+	}
+
+	locationExplore := cfg.params[0]
+	
+	baseURL := "https://pokeapi.co/api/v2/location-area/"
+    url := baseURL + locationExplore
+	// Creates new location struct
+	var locationArea LocationArea
 	var body []byte
 	
-	url := *cfg.previous
+
+
 	
 	entry, exists := cache.Get(url)
 	if exists {
 		body = entry
 	} else {
-	
+
 	res, err := http.Get(url)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
@@ -284,10 +311,9 @@ func commandExplore(cfg *Config, cache *pokecache.Cache) error {
 		fmt.Printf("Error: %s", err)
 		return err
 	}
-	// Creates new location struct
 	
 	// Uses the helper unmarshal function
-	err = unmarshalJSON(body, &location)
+	err = unmarshalJSON(body, &locationArea)
 	if err != nil {
 		fmt.Printf("Error: %s", err)
 		return err
@@ -296,6 +322,15 @@ func commandExplore(cfg *Config, cache *pokecache.Cache) error {
 	cache.Add(url, body)
 
 }
+
+
+	fmt.Println("Found Pokemon")
+	// Prints each Pokemon in the area
+	for _, encounter := range locationArea.PokemonEncounters {
+		fmt.Printf(" - %s\n", encounter.Pokemon.Name)
+	}
+	return nil
+
 }
 
 // Unmarshalling of JSON data recieved - this will take a slice of bytes, and pass it 
