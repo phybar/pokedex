@@ -11,6 +11,7 @@ import (
 	"time"
 	"github.com/phybar/pokedexcli/pokecache"
 	"reflect"
+	"math/rand"
 )
 // variable for the input command used after it has been cleaned
 var command string
@@ -43,10 +44,35 @@ type LocationArea struct {
     } `json:"pokemon_encounters"`
 }
 
+type Pokemon struct {
+    Name           string `json:"name"`
+    BaseExperience int    `json:"base_experience"`
+	Height         int    `json:"height"`
+	Weight         int    `json:"weight"`
+	Stats []struct {
+		BaseStat int `json:"base_stat"`
+		Effort   int `json:"effort"`
+		Stat     struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"stat"`
+	} `json:"stats"`
+	Types []struct {
+		Slot int `json:"slot"`
+		Type struct {
+			Name string `json:"name"`
+			URL  string `json:"url"`
+		} `json:"type"`
+	} `json:"types"`
+}
+	
+
+
 type Config struct {
 	next 	*string // URL for the next page in the list
 	previous *string // URL for the previous page in the list
 	params []string // Store command parameters
+	pokedex map[string]Pokemon
 }
 
 
@@ -76,10 +102,21 @@ var commands = map[string]cliCommand{
 		description: "Lists all Pokemon withing an area",
 		callback: cliCommandWithCacheFunc(commandExplore),
 	},
+	"catch": {
+		name: "catch",
+		description: "Throws a pokeball to try and catch em all",
+		callback: cliCommandWithCacheFunc(commandCatch),
+	},
+	"inspect": {
+		name: "inspect",
+		description: "Checks what is in your pokedex",
+		callback: cliCommandFunc(commandInspect),
+	},
 }
 
 
 func main(){
+	rand.Seed(time.Now().UnixNano())
 	scanner := bufio.NewScanner(os.Stdin)
 
 	// Initialise the cache
@@ -90,6 +127,7 @@ func main(){
         next: nil,
         previous: nil,
 		params: []string{},
+		pokedex: make(map[string]Pokemon),
     }
 
 
@@ -126,8 +164,6 @@ func main(){
 				err = fn(cfg, cache)
 			case cliCommandFunc:
 				err = fn(cfg)
-			// case cliCommandExplore:
-			// 	err = fn(cfg, input)
 			default:
 				fmt.Printf("Unrecognized command type: %s\n", reflect.TypeOf(cmd.callback))
 			}
@@ -150,7 +186,7 @@ func commandExit(cfg *Config) error {
 }
 
 func commandHelp(cfg *Config) error {
-	fmt.Println("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nmap: Displays the next 20 map locations\nmapb: Displays the previous 20 map locations\nexit: Exit the Pokedex")
+	fmt.Println("Welcome to the Pokedex!\nUsage:\n\nhelp: Displays a help message\nmap: Displays the next 20 map locations\nmapb: Displays the previous 20 map locations\ncatch: Tries to catch the target pokemon - Usage 'catch [pokemnon name]'\ninspect: Checks the pokedex for a pokemon\nexit: Exit the Pokedex")
 	return nil
 }
 // This function will send a Get request to the pokeApi for locations
@@ -333,11 +369,123 @@ func commandExplore(cfg *Config, cache *pokecache.Cache) error {
 
 }
 
+// Command to catch pokemon - using random number generation (rand/math) againse the base experience to catch a pokemon!
+func commandCatch(cfg *Config, cache *pokecache.Cache) error {
+	// This command takes the name of the pokemon as the second param and then uses a math/rand call to comapre.
+	if len(cfg.params) < 1 {
+		fmt.Println("Please provide a pokemon name")
+		return nil
+	}
+
+	pokemonCatch := cfg.params[0]
+	
+	baseURL := "https://pokeapi.co/api/v2/pokemon/"
+    url := baseURL + pokemonCatch
+	// Creates new location struct
+	var pokemon Pokemon
+	var body []byte
+	var target string
+	var difficulty int
+	var err error
+	
+	entry, exists := cache.Get(url)
+	if exists {
+		body = entry
+	} else {
+
+	res, err := http.Get(url)
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		// fmt.Println("Reached error block")
+		// fmt.Println("Using body:", string(body))
+		return err
+	}
+	defer res.Body.Close()
+
+// Takes the response and checks the status code to make sure its complete
+	body, err = io.ReadAll(res.Body)
+	if res.StatusCode < 200 || res.StatusCode > 299 {
+		fmt.Printf("Response failed with status code: %d and\nbody: %s\n", res.StatusCode, body)
+	}
+	if err != nil {
+		fmt.Printf("Error: %s", err)
+		return err
+	}
+
+	
+
+	cache.Add(url, body)
+
+	}
+
+	// Uses the helper unmarshal function
+	err = unmarshalJSON(body, &pokemon)
+	if err != nil {
+	fmt.Printf("Error: %s", err)
+	return err
+	}
+
+	target = pokemon.Name
+	difficulty = pokemon.BaseExperience
+
+	fmt.Printf("Throwing a Pokeball at %s...\n", target)
+	// Throws a ball at the pokemon
+	n := difficulty + 50
+	randomNum := rand.Intn(n)
+	// fmt.Printf("Pokemon Difficulty = %d\n", difficulty)
+	// fmt.Printf("You rolled a %d\n", randomNum)
+	if randomNum <= difficulty {
+		fmt.Printf("%s escaped!\n", target)
+		return nil
+	} else {
+		fmt.Printf("%s was caught!\n", target)
+		cfg.pokedex[target] = pokemon
+	}
+	return nil
+}
+
+func commandInspect(cfg *Config) error {
+	// var pokemon Pokemon
+	// var err error
+	if len(cfg.params) < 1 {
+		fmt.Println("Please provide a pokemon name")
+		return nil
+	}
+
+	pokemonInspect := cfg.params[0]
+
+	pokemon, exists := cfg.pokedex[pokemonInspect]
+	if exists {
+		fmt.Printf("Name: %s\n", pokemon.Name)
+		fmt.Printf("Height: %d\n", pokemon.Height)
+		fmt.Printf("Weight: %d\n", pokemon.Weight)
+
+		fmt.Printf("Stats:\n")
+		for _, stat := range pokemon.Stats {
+			fmt.Printf("	-%s: %d\n", stat.Stat.Name, stat.BaseStat)
+		}
+
+		fmt.Println("Types:")
+		for _, t := range pokemon.Types {
+    		fmt.Printf("  - %s\n", t.Type.Name)
+		}
+	
+	} else {
+		fmt.Println("Pokemon not yet caught!")
+	}
+	return nil
+}
+
+
+
+
+
 // Unmarshalling of JSON data recieved - this will take a slice of bytes, and pass it 
 // into a struct for the correct data type, returning the struct
 func unmarshalJSON(data []byte, v interface{}) error {
 	return json.Unmarshal(data, v)
 }
+
 
 func cleanInput(input string) []string {
 	// logic for cleaning the input goes here
